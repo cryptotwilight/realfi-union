@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: APACHE 2.0
 pragma solidity ^0.8.30;
 
-import {FullTreasuryBalance} from "../structs/RUStructs.sol";
+import {FullTreasuryBalance} from "../structs/RFUStructs.sol";
 
 interface IRealFiUnionTreasury { 
 
@@ -11,9 +11,9 @@ interface IRealFiUnionTreasury {
 
     function withdraw(uint256 _savingsId, uint256 _amount) external returns (uint256 _treasuryBalance); 
 
-    function lend(uint256 _savingsId, uint256 _loanId, uint256 _amount) external returns (uint256 _treasuryBalance); 
+    function lend(uint256 _savingsId, uint256 _loanId, uint256 _amount, uint256 _totalInterest) external returns (uint256 _treasuryBalance); 
 
-    function repay(uint256 _savingsId, uint256 _loanId, uint256 _amount) external payable returns (uint256 _treasuryBalance); 
+    function repay(uint256 _savingsId, uint256 _loanId, uint256 _amount, uint256 _interest) external payable returns (uint256 _treasuryBalance); 
 
 }
 
