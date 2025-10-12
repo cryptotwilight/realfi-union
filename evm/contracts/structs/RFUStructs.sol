@@ -8,7 +8,8 @@ enum Term {DAY, WEEK, MONTH, YEAR}
 struct ProtoLoanRequest { 
     address borrower; 
     uint256 amount;
-    Term term;  
+    Term term;
+    Period paymentPeriod;   
     uint256 rateId;  
     uint256 savingsId; 
 }
@@ -23,7 +24,8 @@ struct LoanRequest {
     Period  paymentPeriod; 
     uint256 created; 
     uint256 expiryDate; 
-    uint256 voteThresholdId; 
+    uint256 voteThresholdId;
+    uint256 contributedFunds;  
     uint256 decisionDate;
     Decision decision; 
 }
@@ -52,7 +54,9 @@ struct LoanStake {
     uint256 loanRequestId; 
     address holder; 
     uint256 amount; 
+    uint256 votes; 
     uint256 created;
+    bool isActive; 
 }
 
 enum RateType {SAVINGS_INTEREST, LOAN_INTEREST}
@@ -104,7 +108,7 @@ struct LoanTreasury {
     uint256 interestOutstanding; 
     uint256 interestAvailable; 
 }
-enum EVENT_TYPE {DEPOSIT, WITHDRAW, BORROW_REQUEST, BORROW_CANCEL, LEND, BORROW,  REPAY, PAYOUT}
+enum EVENT_TYPE {DEPOSIT, WITHDRAW, BORROW_REQUEST, BORROW_VOTE, BORROW_VOTE_CANCEL, BORROW_CANCEL, BORROW_REJECTED, BORROW_APPROVED, LEND, BORROW,  REPAY, PAYOUT}
 
 event RFU_EVENT(EVENT_TYPE _type, address _instigator, uint256 _totalAmount, uint256 _entityId, uint256 _date); 
 

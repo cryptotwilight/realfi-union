@@ -5,7 +5,9 @@ import "../interfaces/IRealFiUnion.sol";
 import "../interfaces/IRealFiUnionTreasury.sol";
 
 import {Decision, Rate, RateType, Range, Tx, 
-        RFU_EVENT, EVENT_TYPE, ProtoLoanRequest, LoanRequest, Loan, Term, LoanStatus, LoanStake} from "../structs/RFUStructs.sol"; 
+        RFU_EVENT, EVENT_TYPE, ProtoLoanRequest, LoanRequest, Loan, Term, LoanStatus} from "../structs/RFUStructs.sol"; 
+
+import "../lib/RFULib.sol"; 
 
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
@@ -57,9 +59,11 @@ contract RealFiUnion is IRealFiUnion {
 
     mapping(uint256=>uint256) voteTallyByLoanRequestId;
 
-    mapping(uint256=>uint256[]) loanStakeByLoanRequestId; 
+    mapping(uint256=>uint256[]) loanStakeIdsByLoanRequestId; 
     mapping(address=>uint256[]) loanStakeIdsByMemberAddress; 
     mapping(uint256=>LoanStake) loanStakeById; 
+    mapping(address=>mapping(uint256=>uint256)) loanStakeIdByLoanRequestIdByMemberAddress;
+    mapping(address=>mapping(uint256=>bool)) hasLoanStakeByLoanRequestByMemberAddress;
 
     uint256 [] voteThresholdIds;
     mapping(uint256=>VoteThreshold) voteThresholdById;
@@ -105,7 +109,7 @@ contract RealFiUnion is IRealFiUnion {
     }
 
     function getTxIdsBySavingsId(uint256 _savingsId) view external returns (uint256[] memory _txIds) {
-        return txIds; 
+        return txIdsBySavingsId[_savingsId]; 
     }
 
     function getTx(uint256 _txId) view external returns (Tx memory _tx){
@@ -134,7 +138,11 @@ contract RealFiUnion is IRealFiUnion {
         erc20.transferFrom(msg.sender, self, _amount); 
         erc20.approve(address(treasury), _amount); 
         treasury.deposit(_savingsId, _amount);
-        savingsById[_savingsId] += _amount; 
+
+        savingsById[_savingsId].balance += _amount; 
+        savingsById[_savingsId].availableBalance += _amount;
+
+        savingsById[_savingsId].votes += getVotes(_amount);
         savingsById[_savingsId].lastUpdated = block.timestamp; 
 
         emit RFU_EVENT(EVENT_TYPE.DEPOSIT, msg.sender,  _amount, _savingsId, block.timestamp); 
@@ -145,7 +153,7 @@ contract RealFiUnion is IRealFiUnion {
                                 txType  : "DEPOSIT",
                                 amount : _amount,
                                 instigator : msg.sender,
-                                date : block.stamp
+                                date : block.timestamp
                             }); 
         return _txId; 
     }
@@ -153,8 +161,10 @@ contract RealFiUnion is IRealFiUnion {
     // withdraw from the union
     function withdraw(uint256 _savingsId, uint256 _amount)  external returns (uint256 _txId) {
         require(savingsById[_savingsId].isActive, "inactive savings Id");
-        require(savingsById[_savingsId].balance >= _amount, "insufficient balance"); 
-        savingsById[_savingsId] -= _amount;
+        require(savingsById[_savingsId].availableBalance >= _amount, "insufficient balance"); 
+        savingsById[_savingsId].balance -= _amount;
+        savingsById[_savingsId].availableBalance -= _amount;
+        savingsById[_savingsId].votes -= getVotes(_amount);
         savingsById[_savingsId].lastUpdated = block.timestamp; 
 
         treasury.withdraw(_savingsId, _amount); 
@@ -168,7 +178,7 @@ contract RealFiUnion is IRealFiUnion {
                                 txType  : "WITHDRAW",
                                 amount : _amount,
                                 instigator : msg.sender,
-                                date : block.stamp
+                                date : block.timestamp
                             }); 
         return _txId; 
     } 
@@ -188,11 +198,11 @@ contract RealFiUnion is IRealFiUnion {
 
     function requestLoan(ProtoLoanRequest memory _pLoanRequest) payable membersOnly external returns (uint256 _loanRequestId){
         require(msg.sender == _pLoanRequest.borrower, "requesting borrower only"); 
-        require(!hasLoanRequest[msg.sender], "already has loan request "[msg.sender]); 
+        require(!hasLoanRequest[msg.sender], "already has loan request "); 
         hasLoanRequest[msg.sender] = true; 
         require(savingsById[_pLoanRequest.savingsId].owner == msg.sender, "saving holder only"); 
-        require(!hasLoan(msg.sender), "already has loan"); 
-        require(savingsById[_pLoanRequest.savingsId].amount >= _pLoanRequest.amount, "insufficient for savings");
+        require(!hasLoan[msg.sender], "already has loan"); 
+        require(savingsById[_pLoanRequest.savingsId].balance >= _pLoanRequest.amount, "insufficient for savings");
 
         Rate memory rate_ = rateById[_pLoanRequest.rateId]; 
         require(rate_.rateType == RateType.LOAN_INTEREST, "rate type mis-match"); 
@@ -204,11 +214,13 @@ contract RealFiUnion is IRealFiUnion {
                                                         amount : _pLoanRequest.amount,
                                                         interest : rate_.interest, 
                                                         term : _pLoanRequest.term,
+                                                        paymentPeriod : _pLoanRequest.paymentPeriod,
                                                         savingsId : _pLoanRequest.savingsId,
                                                         borrower : _pLoanRequest.borrower,
                                                         created : block.timestamp,
                                                         voteThresholdId : getVoteThresholdId(_pLoanRequest.amount),
                                                         expiryDate : block.timestamp + loanRequestValidityPeriod,
+                                                        contributedFunds : 0, 
                                                         decisionDate : block.timestamp, 
                                                         decision : Decision.PENDING
                                                             
@@ -220,6 +232,7 @@ contract RealFiUnion is IRealFiUnion {
     function withdrawLoanRequest(uint256 _loanRequestId)  external membersOnly returns (bool _cancelled){
         require(msg.sender == loanRequestById[_loanRequestId].borrower, "borrower only"); 
         loanRequestById[_loanRequestId].decision = Decision.WITHDRAWN;
+        loanRequestById[_loanRequestId].decisionDate = block.timestamp;  
         hasLoanRequest[msg.sender] = false; 
          emit RFU_EVENT(EVENT_TYPE.BORROW_CANCEL, msg.sender,  loanRequestById[_loanRequestId].amount, _loanRequestId, block.timestamp); 
          return true; 
@@ -238,43 +251,100 @@ contract RealFiUnion is IRealFiUnion {
     function voteForLoanApproval(uint256 _loanRequestId, uint256 _votes) payable membersOnly external returns (bool _success){
         LoanRequest memory loanRequest_ = loanRequestById[_loanRequestId];
         require(loanRequest_.decision == Decision.PENDING, "invalid loan request state");
-        require(loanRequest_.expiryDate >= block.timestamp, "loan request expired");
-        require(voteTallyByLoanRequestId <=  voteThresholdById[loanRequest_.thresholdId].amount.min, "vote threshold exceeded"); 
-        voteTallyByLoanRequestId[_loanRequestId] += _votes;
-        if(voteTallyByLoanRequestId <=  voteThresholdById[loanRequest_.thresholdId].amount.min){
+
+        if(loanRequest_.expiryDate < block.timestamp){
+            loanRequestById[_loanRequestId].decision = Decision.REJECTED;
+            loanRequestById[_loanRequestId].decisionDate = block.timestamp; 
+            releaseLoanStakes(_loanRequestId); 
+            hasLoanRequest[loanRequest_.borrower] = false;
+            emit RFU_EVENT(EVENT_TYPE.BORROW_REJECTED, msg.sender,  loanRequestById[_loanRequestId].amount, _loanRequestId, block.timestamp);
+            return false; 
+        }
+        require(_votes <= savingsById[savingsIdByMemberAddress[msg.sender]].votes, "insufficient votes");
+        
+        savingsById[savingsIdByMemberAddress[msg.sender]].votes -= _votes; 
+        voteTallyByLoanRequestId[_loanRequestId]        += _votes;
+        
+        if(voteTallyByLoanRequestId[_loanRequestId] >=  voteThresholdById[loanRequest_.voteThresholdId].minimumVotes){
             //approve loan 
             loanRequestById[_loanRequestId].decision = Decision.APPROVED;
+            loanRequestById[_loanRequestId].decisionDate = block.timestamp; 
+
             //create loan
             uint256 loanId_ = index++;
             loanIdByLoanRequestId[_loanRequestId] = loanId_; 
             loanById[loanId_] = Loan({
-                                        id : loanId_,
+                                        id : loanId_,  
+                                        savingsId : loanRequest_.savingsId,
+                                        loanRequestId : _loanRequestId,
                                         borrower : loanRequest_.borrower,
                                         amount : loanRequest_.amount,
-                                        interestRate : loanRequestById[_loanRequestId].interestRate,
-                                        expiryDate : loanRequestById[_loanRequestId].expiryDate
+                                        interest : loanRequest_.interest, 
+                                        paymentPeriod : loanRequest_.paymentPeriod,
+                                        lastPaymentDate : 0,
+                                        completionDueDate : block.timestamp + RFULib.resolveTerm(loanRequest_.term),
+                                        created : block.timestamp, 
+                                        closedDate : 0, 
+                                        status : LoanStatus.ISSUED
                                     });
+                
         }
 
         uint256 loanContribution_ = getLoanContribution(_votes);
         savingsById[savingsIdByMemberAddress[msg.sender]].availableBalance -= loanContribution_;
-        uint256 loanStakeId_ = index++; 
-        loanStakeById[loanStakeId_] = LoanStake({
-                                                    id : loanStakeId_, 
-                                                    loanRequestId : _loanRequestId, 
-                                                    holder : msg.sender, 
-                                                    amount : loanContribution_, 
-                                                    created : block.timestamp
-                                                });
-        loanStakeByLoanRequestId[_loanRequestId].push(loanStakeId_); 
 
+        uint256 remainingRequiredContribution_ = loanRequest_.amount - loanRequestById[_loanRequestId].contributedFunds; 
+        if(loanContribution_ > remainingRequiredContribution_) {
+            loanContribution_ = remainingRequiredContribution_;
+        }
+
+        loanRequestById[_loanRequestId].contributedFunds += loanContribution_;
+
+        if(hasLoanStakeByLoanRequestByMemberAddress[msg.sender][_loanRequestId] ){
+            loanStakeById[loanStakeIdByLoanRequestIdByMemberAddress[msg.sender][_loanRequestId]].amount += loanContribution_;
+        }
+        else {
+            //create loan stake
+            uint256 loanStakeId_ = index++; 
+
+            loanStakeIdByLoanRequestIdByMemberAddress[msg.sender][_loanRequestId] = loanStakeId_; 
+            hasLoanStakeByLoanRequestByMemberAddress[msg.sender][_loanRequestId] = true;
+  
+            loanStakeById[loanStakeId_] = LoanStake({
+                                                        id : loanStakeId_,
+                                                        loanRequestId : _loanRequestId, 
+                                                        holder : msg.sender, 
+                                                        amount : loanContribution_, 
+                                                        votes : _votes, 
+                                                        created : block.timestamp,
+                                                        isActive : true
+                                                });
+            loanStakeIdsByLoanRequestId[_loanRequestId].push(loanStakeId_);
+            loanStakeIdsByMemberAddress[msg.sender].push(loanStakeId_); 
+        }
         emit RFU_EVENT(EVENT_TYPE.BORROW_VOTE, msg.sender,  _votes, _loanRequestId, block.timestamp);
+
         return true; 
     }
 
     function recindVoteForLoanApproval(uint256 _loanRequestId) payable membersOnly external returns (bool _success){
+        LoanRequest memory loanRequest_ = loanRequestById[_loanRequestId]; 
+        require(loanRequest_.decision == Decision.PENDING, "invalid loan request state" ); 
+        LoanStake memory loanStake_ = loanStakeById[loanStakeIdByLoanRequestIdByMemberAddress[msg.sender][_loanRequestId]]; 
+        
+        // return staked funds 
+        loanRequestById[_loanRequestId].contributedFunds -= loanStake_.amount;
+        savingsById[savingsIdByMemberAddress[msg.sender]].availableBalance += loanStake_.amount;
 
-        emit RFU_EVENT(EVENT_TYPE.BORROW_VOTE_CANCEL, msg.sender,  _amount, _loanRequestId, block.timestamp); 
+        hasLoanStakeByLoanRequestByMemberAddress[msg.sender][_loanRequestId] = false;
+        
+        // return the votes
+        voteTallyByLoanRequestId[_loanRequestId]          -= loanStake_.votes;
+        savingsById[savingsIdByMemberAddress[msg.sender]].votes += loanStake_.votes; 
+        
+
+        emit RFU_EVENT(EVENT_TYPE.BORROW_VOTE_CANCEL, msg.sender,  loanStake_.amount, _loanRequestId, block.timestamp); 
+        return true; 
     }
 
     // manage your loan
@@ -286,31 +356,51 @@ contract RealFiUnion is IRealFiUnion {
         require(loanById[_loanId].borrower == msg.sender, "borrower only");
         require(loanById[_loanId].status == LoanStatus.ISSUED, "invalid loan state"); 
         loanById[_loanId].status = LoanStatus.CANCELLED; 
-        releaseStakes(_loanId); 
+        releaseLoanStakes(_loanId); 
         emit RFU_EVENT(EVENT_TYPE.BORROW_CANCEL, msg.sender, loanById[_loanId].amount, _loanId, block.timestamp); 
         return true; 
     }
 
     function drawDownLoan(uint256 _loanId) external returns (uint256 _loanAmount){
-        require(loanById[_loanId].borrower == msg.sender, "borrower only");
         Loan memory loan_ = loanById[_loanId]; 
+        require(loan_.borrower == msg.sender, "borrower only");
+        require(loan_.status == LoanStatus.ISSUED, "invalid loan state"); 
+        loanById[_loanId].status = LoanStatus.DRAWNDOWN; 
+
         (uint256 principal_, uint256 interest_) = getPrincipalAndInterest(_loanId, loan_.amount);
         treasury.lend(loanRequestById[loanById[_loanId].loanRequestId].savingsId, _loanId, principal_, interest_); 
-
+        
         erc20.transferFrom(address(self), msg.sender, principal_); 
 
         emit RFU_EVENT(EVENT_TYPE.BORROW, msg.sender,  principal_, _loanId, block.timestamp); 
+        return principal_; 
     }
 
     function repayLoan(uint256 _loanId, uint256 _amount) payable external returns (uint256 _loanBalance){
-        erc20.transferFrom(msg.sender, self, _amount); 
-        erc20.approve(address(treasury), _amount); 
-        (uint256 principal_, uint256 interest_) = getPrincipalAndInterest(_loanId, _amount);
+         Loan memory loan_ = loanById[_loanId]; 
+         require(loan_.status == LoanStatus.DRAWNDOWN || loan_.status == LoanStatus.DEFAULTED, "invalid loan state"); 
+
+         uint256 transferAmount_ = _amount; 
+         if(loanById[_loanId].amount < _amount){
+             transferAmount_ = loanById[_loanId].amount;
+        }
+
+        erc20.transferFrom(msg.sender, self, transferAmount_); 
+        erc20.approve(address(treasury), transferAmount_); 
+
+        (uint256 principal_, uint256 interest_) = getPrincipalAndInterest(_loanId, transferAmount_);
         treasury.repay(loanRequestById[loanById[_loanId].loanRequestId].savingsId ,_loanId, principal_, interest_); 
 
-        loanById[_loanId].balance -= _amount; 
-        _loanBalance = loanById[_loanId].balance;
-        emit RFU_EVENT(EVENT_TYPE.REPAY, msg.sender,  _amount, _loanId, block.timestamp);
+        decreaseLoanStakes(_loanId, principal_); 
+       
+        loanById[_loanId].amount -= transferAmount_; 
+        _loanBalance = loanById[_loanId].amount;
+
+        if(_loanBalance == 0){
+            loanById[_loanId].status = LoanStatus.CLOSED;
+        }
+
+        emit RFU_EVENT(EVENT_TYPE.REPAY, msg.sender,  transferAmount_, _loanId, block.timestamp);
         return _loanBalance;  
     } 
 
@@ -336,13 +426,14 @@ contract RealFiUnion is IRealFiUnion {
         savingsIdByMemberAddress[msg.sender] = _savingsId;
         savingsIds.push(_savingsId); 
         savingsById[_savingsId] = Savings({
-                                                id : _savingsId,
-                                                balance : _initialDeposit,
-                                                votes : getVotes(_initialDeposit),
-                                                owner : msg.sender,
-                                                isActive : true, 
-                                                lastUpdated : block.timestamp
-                                            });
+                                            id : _savingsId,
+                                            balance : _initialDeposit, 
+                                            availableBalance : _initialDeposit,
+                                            votes : getVotes(_initialDeposit),
+                                            owner : msg.sender,
+                                            isActive : true,  
+                                            lastUpdated : block.timestamp 
+                                        });
         return _savingsId; 
     } 
 
@@ -389,14 +480,15 @@ contract RealFiUnion is IRealFiUnion {
         return _voteThresholdId; 
     }
     
-    function setRate(uint256 _amount, RateType _rateType, uint256 _expiryDate) external safeOnly returns (bool _success){
+    function setRate(Range memory _amount, uint256 _interest, RateType _rateType, uint256 _expiryDate) external safeOnly returns (bool _success){
         uint256 rateId_ = index++; 
         rateIds.push(rateId_); 
         rateById[rateId_] = Rate({
-                                    id :rateId_, 
-                                    amount : _amount, 
+                                    id : rateId_,  
+                                    amount : _amount,  
+                                    interest : _interest, 
                                     rateType : _rateType,
-                                    setDate : block.timestamp,
+                                    setDate : block.timestamp, 
                                     expiryDate : _expiryDate
                                 });
         return true; 
@@ -420,8 +512,8 @@ contract RealFiUnion is IRealFiUnion {
 
     function getVoteThresholdId(uint256 _amount) internal view returns (uint256 _id) {
         for(uint256 x = 0; x < voteThresholdIds.length; x++){
-            if(_amount >= voteThresholdIds[x].loanAmount.min && _amount <= voteThresholdIds[x].loanAmount.max){
-                return voteThresholdIds[x].id; 
+            if(_amount >= voteThresholdById[voteThresholdIds[x]].loanAmount.min && _amount <= voteThresholdById[voteThresholdIds[x]].loanAmount.max){
+                return voteThresholdIds[x]; 
             } 
         }
         revert("Votethreshold not found");
@@ -434,8 +526,34 @@ contract RealFiUnion is IRealFiUnion {
         return (_principal, _interest); 
     }
 
-    function releaseStakes(uint256 _loanId) internal returns (bool _released) {
+    function releaseLoanStakes(uint256 _loanRequestId) internal returns (bool _released) {
+        uint256 [] memory loanStakeIds_ = loanStakeIdsByLoanRequestId[_loanRequestId]; 
+        for(uint256 x_ = 0; x_ < loanStakeIds_.length; x_++) {
+            LoanStake memory loanStake_ = loanStakeById[loanStakeIds_[x_]];
+            savingsById[savingsIdByMemberAddress[loanStake_.holder]].availableBalance += loanStake_.amount;
+            savingsById[savingsIdByMemberAddress[loanStake_.holder]].votes += loanStake_.votes; 
+            loanStakeById[loanStakeIds_[x_]].isActive = false; 
+        }
+        return true; 
+    }
 
+    function decreaseLoanStakes(uint256 _loanRequestId, uint256 _amount) internal returns (bool _decreased) {
+        uint256 [] memory loanStakeIds_ = loanStakeIdsByLoanRequestId[_loanRequestId];
+        uint256 votes_ = getVotes(_amount); 
+
+        for(uint256 x_ = 0; x_ < loanStakeIds_.length; x_++) {
+            LoanStake memory loanStake_ = loanStakeById[loanStakeIds_[x_]];
+            uint256 stakeReduction_ = (loanStake_.amount) / loanRequestById[_loanRequestId].amount * _amount;
+
+            loanStakeById[loanStakeIds_[x_]].amount -= stakeReduction_;
+            savingsById[savingsIdByMemberAddress[loanStake_.holder]].availableBalance += stakeReduction_;
+
+            uint256 votesReduction_ = ((loanStake_.votes) / voteTallyByLoanRequestId[_loanRequestId]) * votes_;
+
+            loanStakeById[loanStakeIds_[x_]].votes -= votesReduction_; 
+            savingsById[savingsIdByMemberAddress[loanStake_.holder]].votes += votesReduction_; 
+        }
+        return true; 
     }
 
     function getLoanContribution(uint256 _votes) internal view returns (uint256 _contribution) {

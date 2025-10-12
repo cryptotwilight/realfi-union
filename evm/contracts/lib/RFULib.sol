@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: APACHE 2.0
 pragma solidity ^0.8.30;
 
-import {VoteThreshold} from "../structs/RFUStructs.sol"; 
+import {Term} from "../structs/RFUStructs.sol"; 
 
 library RFULib { 
 
-    function findVoteThreshold(VoteThreshold [] memory _voteThresholds, uint256 _borrowAmount) internal pure returns (uint256 _voteThresholdId) { 
-        for (uint256 x = 0; x < _voteThresholds.length; x++) {
-            if (_borrowAmount >= _voteThresholds[x].minBorrowAmount && _borrowAmount <= _voteThresholds[i].maxBorrowAmount) {
-                _voteThresholdId = _voteThresholds[i].id;
-                break;
-            }
+    function resolveTerm( Term _term) internal pure returns (uint256 _timeInSeconds) {
+        if(_term == Term.DAY) {
+            return 86400;
         }
-
-        return _voteThresholdId; 
+        if(_term == Term.MONTH){
+            return 2629800; // 30.44 days
+        }
+        if(_term == Term.WEEK) {
+            return 86400 * 7; 
+        }
+        if(_term == Term.YEAR) {
+            return 86400 * 365;
+        }
+        return 0; 
     }
 
 }

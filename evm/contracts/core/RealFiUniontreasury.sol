@@ -65,6 +65,7 @@ contract RealFiUnionTreasury is IRealFiUnionTreasury {
         totalSavingsBalance += _amount;
         availableBalance += _amount; 
          
+        lifeTimeDeposits += _amount; 
 
         _treasuryBalance =  totalSavingsBalance + interestBalance; 
         return _treasuryBalance; 
@@ -77,6 +78,8 @@ contract RealFiUnionTreasury is IRealFiUnionTreasury {
         savingsBalanceBySavingsId[_savingsId] -= _amount;
         availableBalance -= _amount;   
         erc20.approve(realFiUnionAddress, _amount);
+         
+        lifeTimeWithdrawals += _amount; 
          
         _treasuryBalance =  totalSavingsBalance + interestBalance; 
         return _treasuryBalance; 

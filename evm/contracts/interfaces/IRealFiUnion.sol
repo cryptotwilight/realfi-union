@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: APACHE 2.0
 pragma solidity ^0.8.30;
 
-import {Savings, LoanRequest, Loan, VoteThreshold, Rate} from "../structs/RFUStructs.sol";
+import {Savings, ProtoLoanRequest, LoanRequest, Loan, VoteThreshold, Rate, LoanStake} from "../structs/RFUStructs.sol";
 
 interface IRealFiUnion { 
 
@@ -33,17 +33,21 @@ interface IRealFiUnion {
     // manage your loan request
     function getLoanRequestIds() view external returns (uint256[] memory); 
 
-    function getLoanRequest(uint256 _loanRequestId) view external returns (LoanRequest memory _loanRequest); 
+    function getLoanRequest(uint256 _loanRequestId) view external returns (LoanRequest memory _pLoanRequest); 
 
     function isApproved(uint256 _loanRequestId) view external returns (bool _isApproved);
 
-    function requestLoan(LoanRequest memory _loanRequest) payable external returns (uint256 _loanRequestId); 
+    function requestLoan(ProtoLoanRequest memory _pLoanRequest) payable external returns (uint256 _loanRequestId); 
 
     function withdrawLoanRequest(uint256 _loanRequestId)  external returns (bool _cancelled);
 
 
     // manage your loan
     function getLoanId(uint256 _loanRequestId) view external returns (uint256 _loanId);
+
+    function getLoanStakeIds() view external returns (uint256 [] memory _loanStakeIds);
+
+    function getLoanStakeById(uint256 _loanStakeId) view external returns (LoanStake memory _loanStake);
 
     function getLoan(uint256 _loanId) view external returns (Loan memory _loan); 
 
