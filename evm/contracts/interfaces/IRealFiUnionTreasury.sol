@@ -15,5 +15,9 @@ interface IRealFiUnionTreasury {
 
     function repay(uint256 _savingsId, uint256 _loanId, uint256 _amount, uint256 _interest) external payable returns (uint256 _treasuryBalance); 
 
+    function retrievePaidInterest(uint256 _savingsId, uint256 _loanId) external returns (uint256 _paidInterest); 
+
+    function payInterest(uint256 _savingsId, uint256 _amount) external returns (uint256 _savingsBalance); 
+
 }
 

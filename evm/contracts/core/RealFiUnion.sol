@@ -208,6 +208,26 @@ contract RealFiUnion is IRealFiUnion {
         require(rate_.rateType == RateType.LOAN_INTEREST, "rate type mis-match"); 
         require(_pLoanRequest.amount >= rate_.amount.min && _pLoanRequest.amount <= rate_.amount.max, "requested loan rate <> amount mis-match"); 
 
+        uint256 fullLoan_ = getRepaymentAmount(_pLoanRequest.savingsId,  rate_); 
+
+        require(fullLoan_ <= savingsById[_pLoanRequest.savingsId].balance, "insufficient collateral for loan"); 
+
+        // manage collateral 
+        savingsById[_pLoanRequest.savingsId].balance -= fullLoan_;
+        savingsById[_pLoanRequest.savingsId].collateralBalance += fullLoan_;
+
+        if(savingsById[_pLoanRequest.savingsId].availableBalance >= fullLoan_){
+            savingsById[_pLoanRequest.savingsId].availableBalance -= fullLoan_;
+            savingsById[_pLoanRequest.savingsId].collateralFunds += fullLoan_;  
+        }
+        else {
+            if(savingsById[_pLoanRequest.savingsId].availableBalance > 0){
+                uint256 contributoryFunds_ = savingsById[_pLoanRequest.savingsId].availableBalance;
+                savingsById[_pLoanRequest.savingsId].availableBalance -= contributoryFunds_; 
+                savingsById[_pLoanRequest.savingsId].collateralFunds += contributoryFunds_;
+            }
+        }
+
         _loanRequestId = index++; 
         loanRequestById[_loanRequestId] = LoanRequest ({
                                                          id : _loanRequestId,  
@@ -223,7 +243,6 @@ contract RealFiUnion is IRealFiUnion {
                                                         contributedFunds : 0, 
                                                         decisionDate : block.timestamp, 
                                                         decision : Decision.PENDING
-                                                            
                                                       });
         emit RFU_EVENT(EVENT_TYPE.BORROW_REQUEST, msg.sender, _pLoanRequest.amount, _loanRequestId, block.timestamp); 
         return _loanRequestId; 
@@ -260,7 +279,7 @@ contract RealFiUnion is IRealFiUnion {
             emit RFU_EVENT(EVENT_TYPE.BORROW_REJECTED, msg.sender,  loanRequestById[_loanRequestId].amount, _loanRequestId, block.timestamp);
             return false; 
         }
-        require(_votes <= savingsById[savingsIdByMemberAddress[msg.sender]].votes, "insufficient votes");
+        require(_votes <= savingsById[savingsIdByMemberAddress[msg.sender]].votes, "insufficient votes held");
         
         savingsById[savingsIdByMemberAddress[msg.sender]].votes -= _votes; 
         voteTallyByLoanRequestId[_loanRequestId]        += _votes;
@@ -398,6 +417,7 @@ contract RealFiUnion is IRealFiUnion {
 
         if(_loanBalance == 0){
             loanById[_loanId].status = LoanStatus.CLOSED;
+            releaseLoanStakes(loanById[_loanId].loanRequestId);
         }
 
         emit RFU_EVENT(EVENT_TYPE.REPAY, msg.sender,  transferAmount_, _loanId, block.timestamp);
@@ -407,8 +427,10 @@ contract RealFiUnion is IRealFiUnion {
     // Distribute interest rewards 
 
     function distributeInterestRewards(uint256 _loanId) external returns (uint256 _interestRewards){
-
-
+        Loan memory loan_ = loanById[_loanId]; 
+        _interestRewards = treasury.retrievePaidInterest(loanById[_loanId].savingsId, _loanId); 
+        payoutLoanStakes(loan_.amount, loanStakeIdsByLoanRequestId[loan_.loanRequestId], _interestRewards); // payout the stakes
+        _interestRewards; 
     }
 
     // Join and leave the union 
@@ -429,6 +451,8 @@ contract RealFiUnion is IRealFiUnion {
                                             id : _savingsId,
                                             balance : _initialDeposit, 
                                             availableBalance : _initialDeposit,
+                                            collateralBalance : 0, 
+                                            collateralFunds : 0,
                                             votes : getVotes(_initialDeposit),
                                             owner : msg.sender,
                                             isActive : true,  
@@ -441,10 +465,13 @@ contract RealFiUnion is IRealFiUnion {
         uint256 savingsId_ = savingsIdByMemberAddress[msg.sender];
         require(!hasLoan[msg.sender], "loan outstanding"); 
         require(savingsById[savingsId_].isActive == true, "You are not an active member of this union"); 
+        require(savingsById[savingsId_].balance <= savingsById[savingsId_].availableBalance, "outstanding payments due to you"); 
+
         savingsById[savingsId_].isActive = false; 
         isMember[msg.sender] = false;
 
-        _finalBalance = savingsById[savingsId_].balance;
+        _finalBalance = savingsById[savingsId_].availableBalance;
+        savingsById[savingsId_].availableBalance = 0; 
         savingsById[savingsId_].balance = 0;
         savingsById[savingsId_].votes = 0; 
         savingsById[savingsId_].lastUpdated = block.timestamp; 
@@ -506,6 +533,28 @@ contract RealFiUnion is IRealFiUnion {
     }
     //============================================ INTERNAL ===========================================================
 
+    function payoutLoanStakes(uint256 _loanAmount, uint256[] memory _stakeIds, uint256 _interestRewards) internal returns (bool _paid) {
+        for(uint256 x_ = 0; x_ < _stakeIds.length; x_++){
+            LoanStake memory stake_ = loanStakeById[_stakeIds[x_]];
+            uint256 share_ = getShare(_loanAmount, stake_.amount, _interestRewards);
+            uint256 savingsId_ = savingsIdByMemberAddress[stake_.holder];
+            treasury.payInterest(savingsId_, share_); 
+            savingsById[savingsId_].balance += share_;
+            savingsById[savingsId_].availableBalance += share_; 
+        }
+        return true; 
+    }
+
+    function getShare(uint256 _loanAmount, uint256 _stakeAmount, uint256 _interestRewards) internal pure returns (uint256 _share) {
+        _share = _interestRewards * (_stakeAmount / _loanAmount); 
+        return _share;    
+    }
+
+    function getRepaymentAmount(uint256 _loanAmount, Rate memory _rate) internal pure returns (uint256 _fullLoan){
+        _fullLoan = _loanAmount * ((_rate.interest+100) / 100);
+        return _fullLoan; 
+    }       
+
     function getVotes(uint256 _depositAmount) internal view returns (uint256 _votes){
         return _depositAmount * voteMultiple; 
     }
@@ -516,7 +565,7 @@ contract RealFiUnion is IRealFiUnion {
                 return voteThresholdIds[x]; 
             } 
         }
-        revert("Votethreshold not found");
+        revert("No vote threshold found.");
     }
 
     function getPrincipalAndInterest(uint256 _loanId, uint256 _amount) internal view returns (uint256 _principal, uint256 _interest) {
@@ -530,6 +579,7 @@ contract RealFiUnion is IRealFiUnion {
         uint256 [] memory loanStakeIds_ = loanStakeIdsByLoanRequestId[_loanRequestId]; 
         for(uint256 x_ = 0; x_ < loanStakeIds_.length; x_++) {
             LoanStake memory loanStake_ = loanStakeById[loanStakeIds_[x_]];
+            
             savingsById[savingsIdByMemberAddress[loanStake_.holder]].availableBalance += loanStake_.amount;
             savingsById[savingsIdByMemberAddress[loanStake_.holder]].votes += loanStake_.votes; 
             loanStakeById[loanStakeIds_[x_]].isActive = false; 

@@ -74,6 +74,8 @@ struct Savings {
     uint256 id;
     uint256 balance;
     uint256 availableBalance; 
+    uint256 collateralBalance; 
+    uint256 collateralFunds; 
     uint256 votes;
     address owner; 
     bool isActive; 

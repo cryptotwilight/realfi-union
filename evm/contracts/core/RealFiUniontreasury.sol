@@ -20,7 +20,7 @@ contract RealFiUnionTreasury is IRealFiUnionTreasury {
         _;
     }
 
-    IERC20 immutable erc20;
+    IERC20 erc20; 
     address immutable self;  
 
     address safeAddress; 
@@ -41,6 +41,11 @@ contract RealFiUnionTreasury is IRealFiUnionTreasury {
     constructor(address _safeAddress, address _token) { 
         safeAddress = _safeAddress; 
         erc20 = IERC20(_token); 
+        self = address(this);
+    }
+
+    function getToken() view external returns (address _token) {
+        return address(erc20);
     }
 
     function getRealFiUnion() view external returns (address _realFiUnion) {
@@ -85,6 +90,13 @@ contract RealFiUnionTreasury is IRealFiUnionTreasury {
         return _treasuryBalance; 
     }
 
+    function payInterest(uint256 _savingsId, uint256 _amount) external refiUnionOnly returns (uint256 _savingsBalance){
+        savingsBalanceBySavingsId[_savingsId] += _amount; 
+        totalSavingsBalance                   += _amount; 
+        _savingsBalance = savingsBalanceBySavingsId[_savingsId]; 
+        return _savingsBalance; 
+    }
+
     function withdrawInterest(uint256 _savingsId, uint256 _loanId) external refiUnionOnly returns (uint256 _interestPaid){
         _interestPaid = loanTreasuryByLoanIdBySavingsId[_savingsId][_loanId].interestAvailable;
         loanTreasuryByLoanIdBySavingsId[_savingsId][_loanId].interestAvailable = 0;
@@ -126,8 +138,25 @@ contract RealFiUnionTreasury is IRealFiUnionTreasury {
         return _treasuryBalance; 
     }
 
+    function retrievePaidInterest(uint256 _savingsId, uint256 _loanid) external refiUnionOnly returns (uint256 _paidInterest){
+        _paidInterest = loanTreasuryByLoanIdBySavingsId[_savingsId][_loanid].interestAvailable;
+        loanTreasuryByLoanIdBySavingsId[_savingsId][_loanid].interestAvailable -= _paidInterest; 
+        return _paidInterest; 
+    }   
+
+
+    function migrateSafeAddress(address _safeAddress) external safeOnly returns (bool _success) {
+        safeAddress = _safeAddress; 
+        return true; 
+    }
+
     function setRealFiUnionAddress(address _realFiUnionAddress)  external safeOnly returns (bool _success) {
         realFiUnionAddress = _realFiUnionAddress;
         return true; 
+    }
+
+    function setToken(address _token) external safeOnly returns (bool _success) {
+        erc20 = IERC20(_token);
+        return true;
     }
 }
