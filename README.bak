@@ -37,11 +37,11 @@ RealFi Union Treasury Contract: [0x77CBEbB2F1F36ACcd8Ae3a563FA1F0B5920638b1](htt
 ### Contract Configuration Items 
 #### RealFi Union
 `setFee` : this sets the associated fees to be charged by the Union for various services such as: 
-	•  ** MEMBER_FEE ** - membership fee required to join the Union
-	•  ** LOAN_FEE ** - fee paid for loan issue
-	•  ** LOAN_REQUEST_FEE ** - fee paid for loan request
-	•  ** VOTE_FEE  ** - fee paid to vote for a particular loan request
-	•  ** RECIND_VOTE_FEE ** - fee paid to cancel a vote for a particular loan request
+	? MEMBER_FEE - membership fee required to join the Union
+	? LOAN_FEE - fee paid for loan issue
+	? LOAN_REQUEST_FEE - fee paid for loan request
+	?  VOTE_FEE - fee paid to vote for a particular loan request
+	? RECIND_VOTE_FEE - fee paid to cancel a vote for a particular loan request
 `setVoteMultiple` : this sets the vote multiplier should one be desired by the union. This allows for smaller contributions across more loands
 `setVoteThreshold` : this sets the threshold of votes required to approve a given loan request
 `setRate` : this sets the interest rates that are used and can be requested from the union 
