@@ -170,11 +170,11 @@ const Savings = () => {
           <CardContent>
             <div className="space-y-3">
               {[
-                { type: 'deposit', amount: '1,000 USDC', date: '2024-10-09', time: '14:32', hash: '0xabcd...1234' },
-                { type: 'withdraw', amount: '500 USDC', date: '2024-10-08', time: '09:15', hash: '0xef12...5678' },
-                { type: 'deposit', amount: '2,500 USDC', date: '2024-10-05', time: '16:45', hash: '0x9876...abcd' },
-                { type: 'deposit', amount: '5,000 USDC', date: '2024-10-01', time: '11:20', hash: '0x5432...ef09' },
-                { type: 'withdraw', amount: '300 USDC', date: '2024-09-28', time: '13:55', hash: '0x1357...2468' },
+                { type: 'deposit', amount: '1,000 USDC', date: '2025-10-09', time: '14:32', hash: '0xabcd...1234' },
+                { type: 'withdraw', amount: '500 USDC', date: '2025-10-08', time: '09:15', hash: '0xef12...5678' },
+                { type: 'deposit', amount: '2,500 USDC', date: '2025-10-05', time: '16:45', hash: '0x9876...abcd' },
+                { type: 'deposit', amount: '5,000 USDC', date: '2025-10-01', time: '11:20', hash: '0x5432...ef09' },
+                { type: 'withdraw', amount: '300 USDC', date: '2025-09-28', time: '13:55', hash: '0x1357...2468' },
               ].map((tx, idx) => (
                 <div 
                   key={idx} 
